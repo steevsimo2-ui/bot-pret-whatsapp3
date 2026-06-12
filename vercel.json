@@ -1,4 +1,4 @@
-here{
+{
   "version": 2,
   "builds": [
     {
@@ -9,7 +9,7 @@ here{
   "routes": [
     {
       "src": "/(.*)",
-      "dest": "server.js"
+      "dest": "/server.js"
     }
   ]
 }
