@@ -1,85 +1,99 @@
-module.exports = asmodule.exports = async (req, res) => {
-  if (req.method === 'GET') {
-    res.setHeader('Content-Type', 'application/json');
-    return res.end(JSON.stringify({ status: 'OK', bot: 'FinanceXpress' }));
-  }
+const https = require('https');
 
-  try {
-    let body = '';
-    await new Promise((resolve) => {
-      req.on('data', chunk => body += chunk);
-      req.on('end', resolve);
-    });
-
-    const params = new URLSearchParams(body);
-    const incomingMsg = (params.get('Body') || '').trim().toLowerCase();
-    const from = params.get('From') || '';
-
-    let reply = getReply(incomingMsg, from);
-
-    res.setHeader('Content-Type', 'text/xml');
-    return res.end(`<?xml version="1.0" encoding="UTF-8"?><Response><Message>${reply}</Message></Response>`);
-
-  } catch (err) {
-    res.setHeader('Content-Type', 'text/xml');
-    return res.end(`<?xml version="1.0" encoding="UTF-8"?><Response><Message>Erreur. Tapez menu.</Message></Response>`);
-  }
-};
+const TOKEN = process.env.TELEGRAM_TOKEN;
+const API = `https://api.telegram.org/bot${TOKEN}`;
 
 const sessions = {};
 
-function getReply(msg, from) {
-  if (!sessions[from]) sessions[from] = { step: 'MENU', data: {} };
-  const s = sessions[from];
+function sendMessage(chatId, text) {
+  const data = JSON.stringify({
+    chat_id: chatId,
+    text: text,
+    parse_mode: 'Markdown'
+  });
+  const url = new URL(`${API}/sendMessage`);
+  return new Promise((resolve) => {
+    const req = https.request(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': data.length }
+    }, resolve);
+    req.write(data);
+    req.end();
+  });
+}
 
-  if (msg === 'menu' || msg === 'stop') {
+function menu() {
+  return '👋 Bienvenue chez *FinanceXpress* 🏦\n\n1️⃣ Faire une demande\n2️⃣ Nos conditions\n3️⃣ Documents requis\n4️⃣ Parler à un agent';
+}
+
+async function handleUpdate(chatId, msg) {
+  if (!sessions[chatId]) sessions[chatId] = { step: 'MENU', data: {} };
+  const s = sessions[chatId];
+  const m = msg.trim().toLowerCase();
+
+  if (m === 'menu' || m === '/start' || m === 'stop') {
     s.step = 'MENU'; s.data = {};
-    return menu();
+    return sendMessage(chatId, menu());
   }
 
   if (s.step === 'MENU') {
-    if (msg === '1' || msg.includes('demande')) { s.step = 'NOM'; return 'Parfait ! Quel est votre nom complet ?'; }
-    if (msg === '2') return '📋 Montant: 50 000 – 5 000 000 FCFA\nDurée: 1 à 24 mois\nTaux: 4%/mois\nFrais dossier: 5 000 FCFA\n\nTapez 1 pour faire une demande.';
-    if (msg === '3') return '📎 Documents requis:\n① CNI ou Passeport\n② Justificatif revenus (3 mois)\n③ Facture domicile\n④ Numéro Mobile Money\n\nTapez 1 pour une demande.';
-    if (msg === '4') return '📞 Un agent vous rappelle dans 30 minutes. Restez disponible ✅';
-    return menu();
+    if (m === '1' || m.includes('demande')) { s.step = 'NOM'; return sendMessage(chatId, 'Parfait ! 😊\n\nQuel est votre *nom complet* ?'); }
+    if (m === '2') return sendMessage(chatId, '📋 *Nos conditions :*\n\n• Montant : 50 000 – 5 000 000 FCFA\n• Durée : 1 à 24 mois\n• Taux : 4%/mois\n• Frais dossier : 5 000 FCFA\n\nTapez *1* pour faire une demande.');
+    if (m === '3') return sendMessage(chatId, '📎 *Documents requis :*\n\n① CNI ou Passeport\n② Justificatif revenus (3 mois)\n③ Facture domicile\n④ Numéro Mobile Money\n\nTapez *1* pour une demande.');
+    if (m === '4') return sendMessage(chatId, '📞 Un agent vous rappelle dans *30 minutes*.\nRestez disponible ✅');
+    return sendMessage(chatId, menu());
   }
 
   if (s.step === 'NOM') {
-    s.data.nom = msg; s.step = 'MONTANT';
-    return `Merci ${msg} ! 💰 Quel montant souhaitez-vous ? (entre 50000 et 5000000 FCFA)`;
+    s.data.nom = msg.trim(); s.step = 'MONTANT';
+    return sendMessage(chatId, `Merci *${s.data.nom}* ! 😊\n\n💰 Quel montant souhaitez-vous emprunter ?\n_(entre 50 000 et 5 000 000 FCFA)_`);
   }
 
   if (s.step === 'MONTANT') {
-    const n = parseInt(msg.replace(/\D/g,''));
-    if (!n || n < 50000 || n > 5000000) return '⚠️ Montant invalide. Entrez entre 50000 et 5000000.';
+    const n = parseInt(m.replace(/\D/g, ''));
+    if (!n || n < 50000 || n > 5000000) return sendMessage(chatId, '⚠️ Montant invalide.\nEntrez un nombre entre *50000* et *5000000*.');
     s.data.montant = n; s.step = 'DUREE';
-    return `✅ Montant: ${n.toLocaleString()} FCFA\n\nSur quelle durée ?\n1 - 1 mois\n2 - 3 mois\n3 - 6 mois\n4 - 12 mois\n5 - 24 mois`;
+    return sendMessage(chatId, `✅ Montant : *${n.toLocaleString()} FCFA*\n\n⏳ Sur quelle durée ?\n\n1 - 1 mois\n2 - 3 mois\n3 - 6 mois\n4 - 12 mois\n5 - 24 mois`);
   }
 
   if (s.step === 'DUREE') {
     const d = {'1':1,'2':3,'3':6,'4':12,'5':24};
-    const duree = d[msg] || parseInt(msg);
-    if (!duree) return '⚠️ Choisissez entre 1 et 5.';
+    const duree = d[m] || parseInt(m);
+    if (!duree || duree > 24) return sendMessage(chatId, '⚠️ Choisissez entre 1 et 5.');
     s.data.duree = duree;
-    const mensualite = Math.round((s.data.montant * 0.04 * Math.pow(1.04, duree)) / (Math.pow(1.04, duree) - 1));
+    const mens = Math.round((s.data.montant * 0.04 * Math.pow(1.04, duree)) / (Math.pow(1.04, duree) - 1));
     s.step = 'CONFIRM';
-    return `📊 Simulation:\nNom: ${s.data.nom}\nMontant: ${s.data.montant.toLocaleString()} FCFA\nDurée: ${duree} mois\nMensualité: ${mensualite.toLocaleString()} FCFA\n\nTapez OUI pour confirmer ou NON pour annuler.`;
+    return sendMessage(chatId, `📊 *Simulation de votre prêt :*\n\n👤 Nom : ${s.data.nom}\n💰 Montant : ${s.data.montant.toLocaleString()} FCFA\n⏳ Durée : ${duree} mois\n📅 Mensualité : *${mens.toLocaleString()} FCFA*\n📋 Frais dossier : 5 000 FCFA\n\nTapez *OUI* pour confirmer ou *NON* pour annuler.`);
   }
 
   if (s.step === 'CONFIRM') {
-    if (msg === 'oui') {
+    if (m === 'oui') {
       const ref = 'FX-' + Date.now().toString().slice(-6);
-      sessions[from] = { step: 'MENU', data: {} };
-      return `🎉 Demande enregistrée !\nDossier: ${ref}\n\nUn agent vous contacte dans 24-48h.\nMerci de votre confiance 🙏 FinanceXpress`;
+      sessions[chatId] = { step: 'MENU', data: {} };
+      return sendMessage(chatId, `🎉 *Demande enregistrée !*\n\n📌 Dossier : *${ref}*\n\nUn agent vous contacte dans *24 à 48h* pour finaliser.\n\nMerci de votre confiance 🙏\n_FinanceXpress — Rapide & Fiable_`);
     }
-    sessions[from] = { step: 'MENU', data: {} };
-    return '❌ Demande annulée.\n\n' + menu();
+    sessions[chatId] = { step: 'MENU', data: {} };
+    return sendMessage(chatId, '❌ Demande annulée.\n\n' + menu());
   }
 
-  return menu();
+  return sendMessage(chatId, menu());
 }
 
-function menu() {
-  return '👋 Bienvenue chez FinanceXpress 🏦\n\n1️⃣ Faire une demande\n2️⃣ Nos conditions\n3️⃣ Documents requis\n4️⃣ Parler à un agent';
-}￼Enter
+module.exports = async (req, res) => {
+  if (req.method === 'GET') {
+    return res.end(JSON.stringify({ status: 'OK', bot: 'FinanceXpress Telegram Bot' }));
+  }
+  try {
+    let body = '';
+    await new Promise((resolve) => { req.on('data', c => body += c); req.on('end', resolve); });
+    const update = JSON.parse(body);
+    if (update.message) {
+      const chatId = update.message.chat.id;
+      const text = update.message.text || '';
+      await handleUpdate(chatId, text);
+    }
+    res.end('OK');
+  } catch (e) {
+    res.end('OK');
+  }
+};
